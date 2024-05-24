@@ -15,8 +15,8 @@ namespace OpenAI.Threads
         /// </summary>
         /// <param name="toolOutput"><see cref="ToolOutput"/>.</param>
         [Preserve]
-        public SubmitToolOutputsRequest(ToolOutput toolOutput, bool stream = false)
-            : this(new[] { toolOutput }, stream)
+        public SubmitToolOutputsRequest(ToolOutput toolOutput)
+            : this(new[] { toolOutput })
         {
         }
 
@@ -25,12 +25,11 @@ namespace OpenAI.Threads
         /// </summary>
         /// <param name="toolOutputs">Collection of tools for which the outputs are being submitted.</param>
         [Preserve]
-        [JsonConstructor]
-        public SubmitToolOutputsRequest([JsonProperty("tool_outputs")] IEnumerable<ToolOutput> toolOutputs, [JsonProperty("stream")] bool stream = false)
+        public SubmitToolOutputsRequest(IEnumerable<ToolOutput> toolOutputs)
         {
             ToolOutputs = toolOutputs?.ToList();
-            this.stream = stream;
         }
+
         /// <summary>
         /// A list of tools for which the outputs are being submitted.
         /// </summary>
@@ -38,9 +37,13 @@ namespace OpenAI.Threads
         [JsonProperty("tool_outputs")]
         public IReadOnlyList<ToolOutput> ToolOutputs { get; }
 
+        /// <summary>
+        /// If true, returns a stream of events that happen during the Run as server-sent events,
+        /// terminating when the Run enters a terminal state with a data: [DONE] message.
+        /// </summary>
         [Preserve]
         [JsonProperty("stream")]
-        public bool stream;
+        public bool Stream { get; internal set; }
 
         [Preserve]
         public static implicit operator SubmitToolOutputsRequest(ToolOutput toolOutput) => new(toolOutput);

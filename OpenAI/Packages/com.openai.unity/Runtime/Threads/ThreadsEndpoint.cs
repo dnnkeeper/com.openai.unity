@@ -79,7 +79,7 @@ namespace OpenAI.Threads
         {
             var response = await Rest.DeleteAsync(GetUrl($"/{threadId}"), new RestParameters(client.DefaultRequestHeaders), cancellationToken);
             response.Validate(EnableDebug);
-            return JsonConvert.DeserializeObject<DeletedResponse>(response.Body, OpenAIClient.JsonSerializationOptions)?.Deleted ?? false;
+            return response.Deserialize<DeletedResponse>(client)?.Deleted ?? false;
         }
 
         #region Messages
@@ -88,12 +88,12 @@ namespace OpenAI.Threads
         /// Create a message.
         /// </summary>
         /// <param name="threadId">The id of the thread to create a message for.</param>
-        /// <param name="request"></param>
+        /// <param name="message"><see cref="Message"/>.</param>
         /// <param name="cancellationToken">Optional, <see cref="CancellationToken"/>.</param>
         /// <returns><see cref="MessageResponse"/>.</returns>
-        public async Task<MessageResponse> CreateMessageAsync(string threadId, CreateMessageRequest request, CancellationToken cancellationToken = default)
+        public async Task<MessageResponse> CreateMessageAsync(string threadId, Message message, CancellationToken cancellationToken = default)
         {
-            var jsonContent = JsonConvert.SerializeObject(request, OpenAIClient.JsonSerializationOptions);
+            var jsonContent = JsonConvert.SerializeObject(message, OpenAIClient.JsonSerializationOptions);
             var response = await Rest.PostAsync(GetUrl($"/{threadId}/messages"), jsonContent, new RestParameters(client.DefaultRequestHeaders), cancellationToken);
             response.Validate(EnableDebug);
             return response.Deserialize<MessageResponse>(client);
@@ -104,11 +104,20 @@ namespace OpenAI.Threads
         /// </summary>
         /// <param name="threadId">The id of the thread the messages belong to.</param>
         /// <param name="query"><see cref="ListQuery"/>.</param>
+        /// <param name="runId">Optional, filter messages by the run ID that generated them.</param>
         /// <param name="cancellationToken">Optional, <see cref="CancellationToken"/>.</param>
         /// <returns><see cref="ListResponse{ThreadMessage}"/>.</returns>
-        public async Task<ListResponse<MessageResponse>> ListMessagesAsync(string threadId, ListQuery query = null, CancellationToken cancellationToken = default)
+        public async Task<ListResponse<MessageResponse>> ListMessagesAsync(string threadId, ListQuery query = null, string runId = null, CancellationToken cancellationToken = default)
         {
-            var response = await Rest.GetAsync(GetUrl($"/{threadId}/messages", query), new RestParameters(client.DefaultRequestHeaders), cancellationToken);
+            Dictionary<string, string> queryParams = query;
+
+            if (!string.IsNullOrWhiteSpace(runId))
+            {
+                queryParams ??= new();
+                queryParams.Add("run_id", runId);
+            }
+
+            var response = await Rest.GetAsync(GetUrl($"/{threadId}/messages", queryParams), new RestParameters(client.DefaultRequestHeaders), cancellationToken);
             response.Validate(EnableDebug);
             return response.Deserialize<ListResponse<MessageResponse>>(client);
         }
@@ -166,40 +175,6 @@ namespace OpenAI.Threads
         }
 
         #endregion Messages
-
-        #region Files
-
-        /// <summary>
-        /// Returns a list of message files.
-        /// </summary>
-        /// <param name="threadId">The id of the thread that the message and files belong to.</param>
-        /// <param name="messageId">The id of the message that the files belongs to.</param>
-        /// <param name="query"><see cref="ListQuery"/>.</param>
-        /// <param name="cancellationToken">Optional, <see cref="CancellationToken"/>.</param>
-        /// <returns><see cref="ListResponse{ThreadMessageFile}"/>.</returns>
-        public async Task<ListResponse<MessageFileResponse>> ListFilesAsync(string threadId, string messageId, ListQuery query = null, CancellationToken cancellationToken = default)
-        {
-            var response = await Rest.GetAsync(GetUrl($"/{threadId}/messages/{messageId}/files", query), new RestParameters(client.DefaultRequestHeaders), cancellationToken);
-            response.Validate(EnableDebug);
-            return response.Deserialize<ListResponse<MessageFileResponse>>(client);
-        }
-
-        /// <summary>
-        /// Retrieve message file.
-        /// </summary>
-        /// <param name="threadId">The id of the thread to which the message and file belong.</param>
-        /// <param name="messageId">The id of the message the file belongs to.</param>
-        /// <param name="fileId">The id of the file being retrieved.</param>
-        /// <param name="cancellationToken">Optional, <see cref="CancellationToken"/>.</param>
-        /// <returns><see cref="MessageFileResponse"/>.</returns>
-        public async Task<MessageFileResponse> RetrieveFileAsync(string threadId, string messageId, string fileId, CancellationToken cancellationToken = default)
-        {
-            var response = await Rest.GetAsync(GetUrl($"/{threadId}/messages/{messageId}/files/{fileId}"), new RestParameters(client.DefaultRequestHeaders), cancellationToken);
-            response.Validate(EnableDebug);
-            return response.Deserialize<MessageFileResponse>(client);
-        }
-
-        #endregion Files
 
         #region Runs
 
@@ -439,7 +414,7 @@ namespace OpenAI.Threads
         public async Task<RunResponse> SubmitToolOutputsStreamingAsync(string threadId, string runId, SubmitToolOutputsRequest request, Action<string> resultHandler, CancellationToken cancellationToken = default)
         {
             RunResponse runResponse = null;
-            request.stream = true;
+            request.Stream = true;
             var jsonContent = JsonConvert.SerializeObject(request, OpenAIClient.JsonSerializationOptions);
             Response response = await Rest.PostAsync(GetUrl($"/{threadId}/runs/{runId}/submit_tool_outputs"), jsonContent, (data) => { var deltaResponse = DeltaMessageEventHandler(data, resultHandler); if (deltaResponse.Result as RunResponse != null) { runResponse = deltaResponse.Result as RunResponse; } }, new RestParameters(client.DefaultRequestHeaders), cancellationToken);
 
@@ -510,5 +485,42 @@ namespace OpenAI.Threads
         }
 
         #endregion Runs
+
+        #region Files (Obsolete)
+
+        /// <summary>
+        /// Returns a list of message files.
+        /// </summary>
+        /// <param name="threadId">The id of the thread that the message and files belong to.</param>
+        /// <param name="messageId">The id of the message that the files belongs to.</param>
+        /// <param name="query"><see cref="ListQuery"/>.</param>
+        /// <param name="cancellationToken">Optional, <see cref="CancellationToken"/>.</param>
+        /// <returns><see cref="ListResponse{ThreadMessageFile}"/>.</returns>
+        [Obsolete("Files removed from Assistants. Files now belong to ToolResources.")]
+        public async Task<ListResponse<MessageFileResponse>> ListFilesAsync(string threadId, string messageId, ListQuery query = null, CancellationToken cancellationToken = default)
+        {
+            var response = await Rest.GetAsync(GetUrl($"/{threadId}/messages/{messageId}/files", query), new RestParameters(client.DefaultRequestHeaders), cancellationToken);
+            response.Validate(EnableDebug);
+            return response.Deserialize<ListResponse<MessageFileResponse>>(client);
+        }
+
+        /// <summary>
+        /// Retrieve message file.
+        /// </summary>
+        /// <param name="threadId">The id of the thread to which the message and file belong.</param>
+        /// <param name="messageId">The id of the message the file belongs to.</param>
+        /// <param name="fileId">The id of the file being retrieved.</param>
+        /// <param name="cancellationToken">Optional, <see cref="CancellationToken"/>.</param>
+        /// <returns><see cref="MessageFileResponse"/>.</returns>
+        [Obsolete("Files removed from Assistants. Files now belong to ToolResources.")]
+        public async Task<MessageFileResponse> RetrieveFileAsync(string threadId, string messageId, string fileId, CancellationToken cancellationToken = default)
+        {
+            var response = await Rest.GetAsync(GetUrl($"/{threadId}/messages/{messageId}/files/{fileId}"), new RestParameters(client.DefaultRequestHeaders), cancellationToken);
+            response.Validate(EnableDebug);
+            return response.Deserialize<MessageFileResponse>(client);
+        }
+
+        #endregion Files (Obsolete)
+
     }
 }
