@@ -296,6 +296,21 @@ namespace OpenAI
             return tool;
         }
 
+        public static Tool FromMethodInfo(MethodInfo methodInfo, object instance, string description = null)
+        {
+            var functionName = $"{instance.GetType().FullName}.{methodInfo.Name}".Replace('.', '_');
+
+            if (TryGetTool(functionName, instance, out var tool))
+            {
+                return tool;
+            }
+
+            tool = new Tool(new Function(functionName, description ?? string.Empty, methodInfo, instance));
+            toolCache.Add(tool);
+
+            return tool;
+        }
+
         #region Func<,> Overloads
 
         public static Tool FromFunc<TResult>(string name, Func<TResult> function, string description = null)

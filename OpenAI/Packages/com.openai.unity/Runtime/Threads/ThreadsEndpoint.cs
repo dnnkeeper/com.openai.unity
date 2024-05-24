@@ -8,6 +8,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Utilities.WebRequestRest;
+using UnityEngine;
 
 namespace OpenAI.Threads
 {
@@ -236,94 +237,69 @@ namespace OpenAI.Threads
             response.Validate(EnableDebug);
             return response.Deserialize<RunResponse>(client);
         }
-        private RunResponse streamingRunResponse;
-        public async Task<RunResponse> CreateStreamingRunAsync(string threadId, CreateRunRequest request, Action<string> resultHandler, CancellationToken cancellationToken = default)
+
+        private async Task<BaseResponse> DeltaMessageEventHandler(string eventData, Action<string> resultHandler)
         {
-            streamingRunResponse = null;
-            request.Stream = true;
-            var payload = JsonConvert.SerializeObject(request, OpenAIClient.JsonSerializationOptions);
-            Action<string> serverSentEventCallback = async eventData =>
+            try
             {
-                try
+                using (var stringReader = new StringReader(eventData))
                 {
-                    using (var stringReader = new StringReader(eventData))
+
+                    string line;
+                    while ((line = await stringReader.ReadLineAsync()) != null)
                     {
-
-                        string line;
-                        while ((line = await stringReader.ReadLineAsync()) != null)
+                        if (string.IsNullOrWhiteSpace(line))
                         {
-                            if (string.IsNullOrWhiteSpace(line))
-                            {
-                                continue;
-                            }
+                            continue;
+                        }
 
-                            if (line.StartsWith("event"))
+                        if (line.StartsWith("event"))
+                        {
+                            //Debug.Log($"{line} event detected!");
+                            if (line == "event: done")
                             {
-                                if (line == "event: done")
-                                {
-                                    UnityEngine.Debug.Log($"Done event detected!");
-                                }
-                                else if (line.EndsWith("failed"))
-                                {
-                                    UnityEngine.Debug.LogError($"Run thread failed! \n{eventData}");
-                                }
-                                continue;
+                                Debug.Log($"Streaming event: done");
+                            }
+                            else if (line.EndsWith("failed"))
+                            {
+                                Debug.LogError($"Streaming event: failed! \n{eventData}");
+                            }
+                            continue;
+                        }
+                        else
+                        {
+                            var abstractMessage = JsonConvert.DeserializeObject<MessageAbstract>(line, OpenAIClient.JsonSerializationOptions);
+                            if (abstractMessage != null)
+                            {
+                                return ParseStreamingDeltaLine(resultHandler, line, abstractMessage);
                             }
                             else
                             {
-                                var abstractMessage = JsonConvert.DeserializeObject<MessageAbstract>(line, OpenAIClient.JsonSerializationOptions);
-                                if (abstractMessage != null)
-                                {
-                                    //UnityEngine.Debug.Log($"{abstractMessage.Object}:\n{line}");
-                                    if (abstractMessage.Object == "thread.message.delta")
-                                    {
-                                        var partialResponse = JsonConvert.DeserializeObject<MessageDelta>(line, OpenAIClient.JsonSerializationOptions);
-                                        if (partialResponse != null)
-                                        {
-                                            resultHandler?.Invoke(partialResponse.Delta.PrintContent());
-                                        }
-                                    }
-                                    else if (abstractMessage.Object == "thread.message")
-                                    {
-                                        // var messageResponse = JsonConvert.DeserializeObject<MessageResponse>(line, OpenAIClient.JsonSerializationOptions);
-                                        // if (messageResponse != null)
-                                        // {
-                                        //     resultHandler?.Invoke(messageResponse.PrintContent());
-                                        // }
-                                    }
-                                    else if (abstractMessage.Object == "thread.run.step")
-                                    {
-                                        // var stepResponse = JsonConvert.DeserializeObject<RunStepResponse>(line, OpenAIClient.JsonSerializationOptions);
-                                        // UnityEngine.Debug.Log($"stepResponse.Status: {stepResponse.Status}");
-                                    }
-                                    else if (abstractMessage.Object == "thread.run")
-                                    {
-                                        var run = JsonConvert.DeserializeObject<RunResponse>(line, OpenAIClient.JsonSerializationOptions);
-                                        if (run.Status == RunStatus.Completed)
-                                        {
-                                            streamingRunResponse = run;
-                                        }
-                                    }
-                                }
-                                else
-                                {
-                                    UnityEngine.Debug.LogError($"Could Parse\n{line}");
-                                }
+                                Debug.LogError($"Couldn't Parse:\n{line}");
                             }
                         }
                     }
+                    return null;
                 }
-                catch (Exception e)
-                {
-                    UnityEngine.Debug.LogError($"{eventData}\n{e}");
-                }
-            };
-            Response response = await Rest.PostAsync(GetUrl($"/{threadId}/runs"), payload, serverSentEventCallback, new RestParameters(client.DefaultRequestHeaders), cancellationToken);
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"{e}\n{eventData}");
+                return null;
+            }
+        }
+        public async Task<RunResponse> CreateStreamingRunAsync(string threadId, CreateRunRequest request, Action<string> resultHandler, CancellationToken cancellationToken = default)
+        {
+            RunResponse runResponse = null;
+            request.Stream = true;
+            var payload = JsonConvert.SerializeObject(request, OpenAIClient.JsonSerializationOptions);
+
+            Response response = await Rest.PostAsync(GetUrl($"/{threadId}/runs"), payload, (data) => { var deltaResponse = DeltaMessageEventHandler(data, resultHandler); if (deltaResponse.Result as RunResponse != null) { runResponse = deltaResponse.Result as RunResponse; } }, new RestParameters(client.DefaultRequestHeaders), cancellationToken);
             response?.Validate(EnableDebug);
 
             var responseReceived = Task.Run(() =>
             {
-                while (streamingRunResponse == null)
+                while (runResponse == null)
                 {
                     Task.Delay(100).Wait(); // Check every 100ms.
                 }
@@ -332,13 +308,57 @@ namespace OpenAI.Threads
             if (await Task.WhenAny(responseReceived, Task.Delay(30000)) == responseReceived)
             {
                 // task completed within timeout
-                UnityEngine.Debug.Log($"runResponse: {streamingRunResponse.Status}");
-                return streamingRunResponse;
+                Debug.Log($"{threadId}/runs response.Status: {runResponse.Status}");
+                return runResponse;
             }
             else
             {
                 // timeout logic
-                UnityEngine.Debug.LogError($"runResponse timeout");
+                Debug.LogError($"{threadId}/runs failed: timeout (30s)");
+                return runResponse;
+            }
+        }
+
+        /// <summary>
+        /// Parse the streaming delta line from OpenAI streaming API response.
+        /// </summary>
+        /// <param name="deltaStringHandler"></param>
+        /// <param name="line"></param>
+        /// <param name="abstractMessage"></param>
+        private BaseResponse ParseStreamingDeltaLine(Action<string> deltaStringHandler, string line, MessageAbstract abstractMessage)
+        {
+            if (abstractMessage.Object.StartsWith("thread.run.step"))
+            {
+                var stepResponse = JsonConvert.DeserializeObject<RunStepResponse>(line, OpenAIClient.JsonSerializationOptions);
+                return stepResponse;
+            }
+            else if (abstractMessage.Object.StartsWith("thread.run"))
+            {
+                var runResponse = JsonConvert.DeserializeObject<RunResponse>(line, OpenAIClient.JsonSerializationOptions);
+                return runResponse;
+            }
+            else if (abstractMessage.Object.StartsWith("thread.message"))
+            {
+                if (abstractMessage.Object.EndsWith("delta"))
+                {
+                    var deltaResponse = JsonConvert.DeserializeObject<MessageDelta>(line, OpenAIClient.JsonSerializationOptions);
+                    if (deltaResponse != null)
+                    {
+                        deltaStringHandler?.Invoke(deltaResponse.Delta.PrintContent());
+                    }
+
+                    return null;
+                }
+                else
+                {
+                    var messageResponse = JsonConvert.DeserializeObject<MessageResponse>(line, OpenAIClient.JsonSerializationOptions);
+
+                    return messageResponse;
+                }
+            }
+            else
+            {
+                Debug.LogWarning($"Unknown delta type:\n{abstractMessage.Object}");
                 return null;
             }
         }
@@ -414,6 +434,35 @@ namespace OpenAI.Threads
             var response = await Rest.PostAsync(GetUrl($"/{threadId}/runs/{runId}/submit_tool_outputs"), jsonContent, new RestParameters(client.DefaultRequestHeaders), cancellationToken);
             response.Validate(EnableDebug);
             return response.Deserialize<RunResponse>(client);
+        }
+
+        public async Task<RunResponse> SubmitToolOutputsStreamingAsync(string threadId, string runId, SubmitToolOutputsRequest request, Action<string> resultHandler, CancellationToken cancellationToken = default)
+        {
+            RunResponse runResponse = null;
+            request.stream = true;
+            var jsonContent = JsonConvert.SerializeObject(request, OpenAIClient.JsonSerializationOptions);
+            Response response = await Rest.PostAsync(GetUrl($"/{threadId}/runs/{runId}/submit_tool_outputs"), jsonContent, (data) => { var deltaResponse = DeltaMessageEventHandler(data, resultHandler); if (deltaResponse.Result as RunResponse != null) { runResponse = deltaResponse.Result as RunResponse; } }, new RestParameters(client.DefaultRequestHeaders), cancellationToken);
+
+            var responseReceived = Task.Run(() =>
+            {
+                while (runResponse == null)
+                {
+                    Task.Delay(100).Wait(); // Check every 100ms.
+                }
+            });
+
+            if (await Task.WhenAny(responseReceived, Task.Delay(30000)) == responseReceived)
+            {
+                // task completed within timeout
+                Debug.Log($"{threadId}/runs/{runId}/submit_tool_outputs response.Status: {runResponse.Status}");
+                return runResponse;
+            }
+            else
+            {
+                // timeout logic
+                Debug.LogError($"{threadId}/runs/{runId}/submit_tool_outputs failed: timeout (30s)");
+                return runResponse;
+            }
         }
 
         /// <summary>

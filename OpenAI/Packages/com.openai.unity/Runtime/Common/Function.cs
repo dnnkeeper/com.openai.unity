@@ -221,7 +221,7 @@ namespace OpenAI
 
                 return arguments;
             }
-            internal set => arguments = value;
+            set => arguments = value;
         }
 
         /// <summary>
@@ -447,6 +447,8 @@ namespace OpenAI
 
             return (function, invokeArgs);
         }
+
+        public Type GetReturnType() => MethodInfo.ReturnType;
 
         #endregion Function Invoking Utilities
     }

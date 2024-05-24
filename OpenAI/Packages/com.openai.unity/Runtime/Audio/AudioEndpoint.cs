@@ -2,7 +2,6 @@
 
 using Newtonsoft.Json;
 using System;
-using System.Globalization;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -43,7 +42,7 @@ namespace OpenAI.Audio
         /// <param name="cancellationToken">Optional, <see cref="CancellationToken"/>.</param>
         /// <returns><see cref="AudioClip"/> and the cached path.</returns>
         [Function("Generates streaming audio from the input text.")]
-        public async Task<Tuple<string, AudioClip>> CreateSpeechStreamAsync(SpeechRequest request, Action<AudioClip> partialClipCallback, CancellationToken cancellationToken = default)
+        public async Task<Tuple<string, AudioClip>> CreateSpeechStreamAsync(SpeechRequest request, Action<AudioClip> partialClipCallback, CancellationToken cancellationToken = default, bool saveCache = true)
         {
             if (partialClipCallback != null && request.ResponseFormat != SpeechResponseFormat.PCM)
             {
@@ -66,7 +65,9 @@ namespace OpenAI.Audio
                 clipName = $"{request.Voice}-{DateTime.UtcNow:yyyyMMddThhmmssfffff}.{ext}";
             }
 
-            Rest.TryGetDownloadCacheItem(clipName, out var cachedPath);
+            var cachedPath = "";
+            if (saveCache)
+                Rest.TryGetDownloadCacheItem(clipName, out cachedPath);
 
             if (request.ResponseFormat == SpeechResponseFormat.PCM)
             {
@@ -80,8 +81,12 @@ namespace OpenAI.Audio
                     cancellationToken);
                 response.Validate(EnableDebug);
                 var samples = Utilities.Audio.PCMEncoder.Decode(response.Data);
-                await File.WriteAllBytesAsync(cachedPath, response.Data, cancellationToken).ConfigureAwait(true);
-                return new Tuple<string, AudioClip>(cachedPath, AudioClip.Create(clipName, samples.Length, 1, 24000, false));
+                if (saveCache)
+                    await File.WriteAllBytesAsync(cachedPath, response.Data, cancellationToken).ConfigureAwait(true);
+                var fullClip = AudioClip.Create(clipName, samples.Length, 1, 24000, false);
+                var chunk = Utilities.Audio.PCMEncoder.Decode(response.Data);
+                fullClip.SetData(chunk, 0);
+                return new Tuple<string, AudioClip>(cachedPath, fullClip);
 
                 void StreamCallback(Response partialResponse)
                 {
@@ -111,7 +116,7 @@ namespace OpenAI.Audio
                 UnityWebRequest.kHttpVerbPOST,
                 clipName,
                 payload,
-                parameters: new RestParameters(client.DefaultRequestHeaders, debug: EnableDebug),
+                parameters: new RestParameters(client.DefaultRequestHeaders, debug: EnableDebug, cacheDownloads: saveCache),
                 cancellationToken: cancellationToken);
             return new Tuple<string, AudioClip>(cachedPath, clip);
         }
@@ -170,7 +175,7 @@ namespace OpenAI.Audio
 
             if (request.Temperature.HasValue)
             {
-                form.AddField("temperature", request.Temperature.Value.ToString(CultureInfo.InvariantCulture));
+                form.AddField("temperature", request.Temperature.ToString());
             }
 
             if (!string.IsNullOrWhiteSpace(request.Language))
@@ -247,7 +252,7 @@ namespace OpenAI.Audio
 
             if (request.Temperature.HasValue)
             {
-                form.AddField("temperature", request.Temperature.Value.ToString(CultureInfo.InvariantCulture));
+                form.AddField("temperature", request.Temperature.ToString());
             }
 
             request.Dispose();

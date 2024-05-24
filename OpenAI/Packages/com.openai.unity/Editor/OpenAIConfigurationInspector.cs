@@ -14,6 +14,7 @@ namespace OpenAI.Editor
 
         private SerializedProperty apiKey;
         private SerializedProperty organizationId;
+        private SerializedProperty projectId;
         private SerializedProperty useAzureOpenAI;
         private SerializedProperty proxyDomain;
         private SerializedProperty resourceName;
@@ -39,6 +40,7 @@ namespace OpenAI.Editor
             {
                 apiKey = serializedObject.FindProperty(nameof(apiKey));
                 organizationId = serializedObject.FindProperty(nameof(organizationId));
+                projectId = serializedObject.FindProperty(nameof(projectId));
                 useAzureOpenAI = serializedObject.FindProperty(nameof(useAzureOpenAI));
                 proxyDomain = serializedObject.FindProperty(nameof(proxyDomain));
                 resourceName = serializedObject.FindProperty(nameof(resourceName));
@@ -104,6 +106,8 @@ namespace OpenAI.Editor
                         EditorGUILayout.HelpBox($"{nameof(organizationId)} must start with '{OpenAIAuthInfo.OrganizationPrefix}'", MessageType.Error);
                     }
                 }
+
+                EditorGUILayout.PropertyField(projectId);
 
                 EditorGUILayout.PropertyField(proxyDomain);
             }

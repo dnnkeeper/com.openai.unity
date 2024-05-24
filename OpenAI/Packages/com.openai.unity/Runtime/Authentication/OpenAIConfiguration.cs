@@ -19,7 +19,7 @@ namespace OpenAI
         public string ApiKey
         {
             get => apiKey;
-            internal set => apiKey = value;
+            set => apiKey = value;
         }
 
         [SerializeField]
